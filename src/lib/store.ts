@@ -1,5 +1,5 @@
 /**
- * Global session state for Locked Drop
+ * Global session state for DEDDROP
  */
 
 import { create } from 'zustand'
@@ -59,7 +59,7 @@ export const useStore = create<DropStore>()(
       setPendingUnlock: (pendingUnlock) => set({ pendingUnlock }),
     }),
     {
-      name: 'conk-drop-store',
+      name: 'deddrop-store',
       // Don't persist the ZK proof across sessions (epoch-bound)
       partialize: (state) => ({
         harborId: state.harborId,

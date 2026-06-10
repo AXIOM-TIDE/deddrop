@@ -1,5 +1,5 @@
 /**
- * CONK SDK wrappers for Locked Drop
+ * CONK SDK wrappers for DEDDROP
  *
  * Uses @mysten/sui directly (avoids conk-sdk version dependency during v0.7.0 staging).
  * Swap to @axiomtide/conk-sdk once v0.7.0 publishes.

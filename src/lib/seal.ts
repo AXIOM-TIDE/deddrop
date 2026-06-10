@@ -1,5 +1,5 @@
 /**
- * SEAL — AES-256-GCM browser encryption for Locked Drop
+ * SEAL — AES-256-GCM browser encryption for DEDDROP
  *
  * Flow:
  *  create: generateKey() → encrypt(content) → [ciphertext, key]

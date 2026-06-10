@@ -1,5 +1,5 @@
 /**
- * zkLogin for Locked Drop
+ * zkLogin for DEDDROP
  * Adapted from conk.app/src/sui/zkLogin.ts
  * Google → derived Sui address → no seed phrase.
  */

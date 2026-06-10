@@ -117,10 +117,7 @@ export default function CreatePage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-16">
       <div className="mb-10">
-        <div className="flex items-center gap-2 mb-2">
-          <Lock className="w-5 h-5 text-cyan-400" />
-          <h1 className="text-2xl font-bold text-white">Create a Drop</h1>
-        </div>
+        <h1 className="text-2xl font-bold text-white mb-1">Create a drop</h1>
         <p className="text-zinc-400 text-sm">
           Paste your content. Set a price. Get a link. You keep 97%.
         </p>
@@ -181,8 +178,7 @@ export default function CreatePage() {
 
           {/* Fee note */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400">
-            <span className="text-zinc-300">Zero app fee</span> at launch. 97% goes to you, 3% to the CONK protocol.
-            Encrypted on-chain. Accessible from any CONK-compatible app.
+            <span className="text-zinc-300">97% to you.</span> 3% protocol fee. Encrypted client-side before anything leaves your browser.
           </div>
 
           {/* CTA */}
@@ -234,8 +230,8 @@ export default function CreatePage() {
               <code className="text-zinc-400 text-xs break-all">{castId}</code>
             </div>
             <div className="text-sm text-zinc-400">
-              Encrypted for <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
-              After expiry, content is freely readable — tides keep accumulating.
+              Locked for <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
+              After that, it’s freely readable.
             </div>
           </div>
           <button

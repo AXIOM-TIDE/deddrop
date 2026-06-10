@@ -126,9 +126,8 @@ export default function DropPage() {
       {step === 'preview' && (
         <div className="space-y-4">
           {cast?.isExpired ? (
-            // Post-expiry: free read (v14 expiry-as-visibility)
             <div className="bg-green-900/20 border border-green-800 rounded-xl px-5 py-4 text-sm text-green-300">
-              This drop has passed its exclusivity window — it's now freely readable.
+              This drop’s paid window has closed — it’s now free to read.
             </div>
           ) : (
             <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-5 py-4 text-sm text-zinc-400">
@@ -155,8 +154,8 @@ export default function DropPage() {
           )}
 
           <p className="text-center text-xs text-zinc-600">
-            Powered by CONK on Sui. Content encrypted with AES-256-GCM.
-            Creator keeps 97%. <a href="https://conk.app" className="text-zinc-500 hover:text-zinc-300">conk.app</a>
+            Encrypted client-side. Settled on-chain. Creator keeps 97%.
+            Powered by <a href="https://conk.app" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition">CONK</a>.
           </p>
         </div>
       )}
@@ -183,7 +182,7 @@ export default function DropPage() {
             </pre>
           </div>
           <p className="text-xs text-zinc-600 text-center">
-            Decrypted client-side. This content was never on any server.
+            Decrypted in your browser. Never passed through any server.
           </p>
         </div>
       )}

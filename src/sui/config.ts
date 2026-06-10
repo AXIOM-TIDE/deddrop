@@ -18,6 +18,6 @@ export const USDC_DECIMALS = 6
 
 export const PROTOCOL_READ_FEE = 1000n // base units = $0.001 USDC
 
-// Default cast settings for Locked Drop
+// Default cast settings for DEDDROP drops
 export const DROP_EXPIRY_DAYS = 30    // 30 days gated; post-expiry free-readable (v14)
 export const DROP_EXPIRY_MS   = DROP_EXPIRY_DAYS * 24 * 60 * 60 * 1000
