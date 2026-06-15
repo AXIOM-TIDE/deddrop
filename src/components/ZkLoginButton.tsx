@@ -3,34 +3,17 @@
  * Wraps the zkLogin flow from conk.app
  */
 
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { startZkLogin, handleZkLoginCallback, isLoggedIn, getSession, logout } from '../lib/zkLogin'
+import { startZkLogin } from '../lib/zkLogin'
 
 interface Props {
   onSuccess?: () => void
 }
 
 export default function ZkLoginButton({ onSuccess }: Props) {
-  const { setSession } = useStore()
   const [loading, setLoading] = useState(false)
-
-  // Handle return from Google on page load
-  useEffect(() => {
-    if (window.location.hash.includes('id_token')) {
-      setLoading(true)
-      handleZkLoginCallback()
-        .then(session => {
-          if (session) {
-            setSession(session)
-            onSuccess?.()
-          }
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false))
-    }
-  }, [])
 
   async function handleClick() {
     setLoading(true)

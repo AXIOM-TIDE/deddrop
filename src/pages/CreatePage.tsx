@@ -3,33 +3,35 @@
  *
  * Step 1: Enter content + set price
  * Step 2: zkLogin (if not already signed in)
- * Step 3: Ensure Harbor + Vessel exist (setup if not)
- * Step 4: Encrypt → sound Cast → register SEAL key → show share link
+ * Step 3: Ensure Vessel + VesselCap exist (one-time setup)
+ * Step 4: Encrypt → sound Cast (v13 API) → register SEAL key → show share link
  */
 
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Lock, DollarSign, Share2, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { Transaction } from '@mysten/sui/transactions'
+import { Lock, DollarSign, Share2, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { sealEncrypt, registerKey } from '../lib/seal'
-import { buildSoundCast, buildOpenHarbor, buildLaunchVessel, findHarbor, findVessels, usdcToBase } from '../lib/conk'
+import {
+  buildSoundCast, buildOpenHarbor, buildLaunchVessel,
+  findHarbor, findVessels, findVesselCap, findUsdcCoins, usdcToBase,
+} from '../lib/conk'
 import { signAndExecute } from '../lib/zkLogin'
-import { ZKPROXY_URL } from '../sui/config'
+import { ZKPROXY_URL, PROTOCOL_CAST_FEE } from '../sui/config'
 import ZkLoginButton from '../components/ZkLoginButton'
 import clsx from 'clsx'
 
 type Step = 'compose' | 'login' | 'setup' | 'publishing' | 'done' | 'error'
 
 export default function CreatePage() {
-  const { session, harborId, vesselId, setHarborId, setVesselId, setPendingDrop } = useStore()
+  const { session, harborId, vesselId, vesselCapId, setHarborId, setVesselId, setVesselCapId, setPendingDrop } = useStore()
 
-  const [content, setContent] = useState('')
-  const [hook, setHook] = useState('')
+  const [content, setContent]           = useState('')
+  const [hook, setHook]                 = useState('')
   const [priceDisplay, setPriceDisplay] = useState('1.00')
-  const [step, setStep] = useState<Step>('compose')
-  const [castId, setCastId] = useState<string | null>(null)
-  const [errorMsg, setErrorMsg] = useState('')
+  const [step, setStep]                 = useState<Step>('compose')
+  const [castId, setCastId]             = useState<string | null>(null)
+  const [errorMsg, setErrorMsg]         = useState('')
 
   async function handlePublish() {
     if (!content.trim() || !hook.trim()) return
@@ -38,45 +40,86 @@ export default function CreatePage() {
     try {
       setStep('setup')
 
-      // Ensure Harbor + Vessel exist
-      let harbor = harborId ?? await findHarbor(session.address)
-      let vessel = vesselId ?? (await findVessels(session.address))[0] ?? null
+      // ── Resolve Vessel + VesselCap ──────────────────────────────────────────
+      let vessel    = vesselId    ?? (await findVessels(session.address))[0]   ?? null
+      let vesselCap = vesselCapId ?? await findVesselCap(session.address)
 
-      if (!harbor || !vessel) {
-        // Create Harbor and/or Vessel in one TX
-        const tx = new Transaction()
-        tx.setSender(session.address)
-        if (!harbor) buildOpenHarbor(tx)
-        // Vessel launch requires Harbor — skip if no Harbor yet; user will fund after
-        const result = await signAndExecute(tx, session)
-        if (result.effects?.status?.status !== 'success') {
-          throw new Error('Harbor/Vessel setup TX failed')
+      if (!vessel || !vesselCap) {
+        // One-time Harbor + Vessel setup (two TXs — harbor::open transfers Harbor,
+        // can't chain result into vessel::launch in the same PTB).
+        let harbor = harborId ?? await findHarbor(session.address)
+
+        if (!harbor) {
+          // TX 1: Create Harbor (costs HARBOR_TIER1_TOTAL = $0.15)
+          const usdcCoins = await findUsdcCoins(session.address)
+          const largestCoin = usdcCoins[0]
+          if (!largestCoin || BigInt(largestCoin.balance) < 150_000n) {
+            throw new Error(
+              'Harbor setup requires $0.15 USDC minimum. ' +
+              'Fund your wallet with USDC on Sui mainnet first.'
+            )
+          }
+          const tx1 = new Transaction()
+          tx1.setSender(session.address)
+          const [harborCap] = buildOpenHarbor(tx1, largestCoin.coinObjectId)
+          tx1.transferObjects([harborCap], tx1.pure.address(session.address))
+          const r1 = await signAndExecute(tx1, session)
+          if (r1.effects?.status?.status !== 'success') {
+            throw new Error('Harbor setup TX failed: ' + JSON.stringify(r1.effects?.status))
+          }
+          harbor = await findHarbor(session.address)
+          if (harbor) { setHarborId(harbor) }
         }
-        // Re-fetch after TX
-        harbor = await findHarbor(session.address)
-        vessel = (await findVessels(session.address))[0] ?? null
-        if (harbor) setHarborId(harbor)
-        if (vessel) setVesselId(vessel)
-      } else {
-        setHarborId(harbor)
-        setVesselId(vessel)
+
+        if (!harbor) throw new Error('Harbor not found after setup. Please try again.')
+
+        if (!vessel || !vesselCap) {
+          // TX 2: Create Vessel
+          const tx2 = new Transaction()
+          tx2.setSender(session.address)
+          const [cap] = buildLaunchVessel(tx2, harbor)
+          tx2.transferObjects([cap], tx2.pure.address(session.address))
+          const r2 = await signAndExecute(tx2, session)
+          if (r2.effects?.status?.status !== 'success') {
+            throw new Error('Vessel setup TX failed: ' + JSON.stringify(r2.effects?.status))
+          }
+          vessel    = (await findVessels(session.address))[0] ?? null
+          vesselCap = await findVesselCap(session.address)
+        }
       }
 
-      if (!vessel) throw new Error('No Vessel found. Please fund your Harbor first.')
+      if (vessel)    setVesselId(vessel)
+      if (vesselCap) setVesselCapId(vesselCap)
+
+      if (!vessel || !vesselCap) {
+        throw new Error('Vessel setup incomplete. Refresh and try again.')
+      }
 
       setStep('publishing')
 
-      // Encrypt content
-      const { ciphertext, keyB64 } = await sealEncrypt(content)
+      // ── Find USDC coin for cast publication fee ─────────────────────────────
+      const usdcCoins = await findUsdcCoins(session.address)
+      const payerCoin = usdcCoins[0]
+      if (!payerCoin || BigInt(payerCoin.balance) < PROTOCOL_CAST_FEE) {
+        throw new Error(
+          `Insufficient USDC. Need at least $0.001 to publish a drop. ` +
+          `Balance: $${(Number(payerCoin?.balance ?? 0) / 1e6).toFixed(4)}`
+        )
+      }
 
-      // Build and execute sound TX
+      // ── Encrypt content ─────────────────────────────────────────────────────
+      const { ciphertext, keyHex, ivHex } = await sealEncrypt(content)
+
+      // ── Build + sign sound TX ──────────────────────────────────────────────
       const tx = new Transaction()
       tx.setSender(session.address)
       buildSoundCast(tx, {
-        vesselId: vessel,
-        hook: hook.slice(0, 120),
+        vesselId:   vessel,
+        vesselCapId: vesselCap,
+        hook:       hook.slice(0, 120),
         ciphertext,
-        priceBase: usdcToBase(priceDisplay),
+        priceBase:  usdcToBase(priceDisplay),
+        usdcCoinId: payerCoin.coinObjectId,
       })
 
       const result = await signAndExecute(tx, session)
@@ -84,29 +127,49 @@ export default function CreatePage() {
         throw new Error('Cast sound TX failed: ' + JSON.stringify(result.effects?.status))
       }
 
-      // Extract castId from created objects
-      const created = result.effects?.created ?? []
-      const castObj = created.find(o =>
-        (o.owner as any)?.Shared !== undefined
+      // ── Extract castId from CastSounded event ──────────────────────────────
+      const soundEvent = result.events?.find(e =>
+        (e.type as string)?.endsWith('::cast::CastSounded')
       )
-      const newCastId = castObj?.reference?.objectId
-      if (!newCastId) throw new Error('Could not find Cast object ID in TX result')
+      const newCastId = soundEvent?.parsedJson
+        ? `0x${(soundEvent.parsedJson as any).cast_id?.replace(/^0x/, '')}`
+        : null
 
-      // Register SEAL key with zkProxy
-      await registerKey(ZKPROXY_URL, newCastId, keyB64, session.address)
+      if (!newCastId) {
+        // Fallback: find shared Cast object in created objects
+        const created = result.effects?.created ?? []
+        const castObj = created.find(o => (o.owner as any)?.Shared !== undefined)
+        if (!castObj?.reference?.objectId) {
+          throw new Error('Could not find Cast object ID in TX result')
+        }
+        setCastId(castObj.reference.objectId)
+      } else {
+        setCastId(newCastId)
+      }
 
-      // Store pending drop in case user refreshes before copying link
+      const finalCastId = newCastId ?? (() => {
+        const created = result.effects?.created ?? []
+        return created.find(o => (o.owner as any)?.Shared !== undefined)?.reference?.objectId
+      })()
+
+      if (!finalCastId) throw new Error('Could not resolve Cast ID from TX result')
+
+      // ── Register SEAL key with zkProxy ─────────────────────────────────────
+      await registerKey(ZKPROXY_URL, finalCastId, keyHex, ivHex)
+
+      // ── Persist pending drop (survives refresh before link is copied) ──────
       setPendingDrop({
         hook,
         priceDisplay,
         ciphertext: Array.from(ciphertext),
-        keyB64,
+        keyHex,
+        ivHex,
       })
 
-      setCastId(newCastId)
+      setCastId(finalCastId)
       setStep('done')
     } catch (e: any) {
-      console.error(e)
+      console.error('[CreatePage]', e)
       setErrorMsg(e.message ?? 'Unknown error')
       setStep('error')
     }
@@ -123,7 +186,7 @@ export default function CreatePage() {
         </p>
       </div>
 
-      {step === 'compose' || step === 'login' ? (
+      {(step === 'compose' || step === 'login') && (
         <div className="space-y-6">
           {/* Hook */}
           <div>
@@ -198,15 +261,29 @@ export default function CreatePage() {
           ) : (
             <div className="space-y-3">
               <p className="text-zinc-500 text-sm text-center">Sign in to publish your drop</p>
-              <ZkLoginButton onSuccess={() => { if (content.trim() && hook.trim()) handlePublish() }} />
+              <ZkLoginButton />
             </div>
           )}
         </div>
-      ) : step === 'setup' ? (
-        <StatusCard icon={<Loader2 className="animate-spin" />} title="Setting up your Vessel…" subtitle="One-time on-chain setup. This only happens once." />
-      ) : step === 'publishing' ? (
-        <StatusCard icon={<Loader2 className="animate-spin" />} title="Encrypting &amp; publishing…" subtitle="Encrypting content client-side, sounding Cast on Sui." />
-      ) : step === 'done' && shareUrl ? (
+      )}
+
+      {step === 'setup' && (
+        <StatusCard
+          icon={<Loader2 className="animate-spin" />}
+          title="Setting up your Vessel…"
+          subtitle="One-time on-chain setup. This only happens once per wallet."
+        />
+      )}
+
+      {step === 'publishing' && (
+        <StatusCard
+          icon={<Loader2 className="animate-spin" />}
+          title="Encrypting &amp; publishing…"
+          subtitle="Encrypting client-side, sounding Cast on Sui."
+        />
+      )}
+
+      {step === 'done' && shareUrl && (
         <div className="space-y-6">
           <div className="flex items-center gap-3 text-green-400">
             <CheckCircle className="w-6 h-6" />
@@ -231,7 +308,7 @@ export default function CreatePage() {
             </div>
             <div className="text-sm text-zinc-400">
               Locked for <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
-              After that, it’s freely readable.
+              After that, it&apos;s freely readable.
             </div>
           </div>
           <button
@@ -241,13 +318,15 @@ export default function CreatePage() {
             Create another drop
           </button>
         </div>
-      ) : step === 'error' ? (
+      )}
+
+      {step === 'error' && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 text-red-400">
             <AlertCircle className="w-5 h-5" />
             <span className="font-semibold">Something went wrong</span>
           </div>
-          <div className="bg-zinc-900 border border-red-900 rounded-lg px-4 py-3 text-red-300 text-sm font-mono">
+          <div className="bg-zinc-900 border border-red-900 rounded-lg px-4 py-3 text-red-300 text-sm font-mono break-all">
             {errorMsg}
           </div>
           <button
@@ -257,12 +336,12 @@ export default function CreatePage() {
             Try again
           </button>
         </div>
-      ) : null}
+      )}
     </div>
   )
 }
 
-const DROP_EXPIRY_DAYS_DISPLAY = 30
+const DROP_EXPIRY_DAYS_DISPLAY = 7  // matches DUR_7D
 
 function StatusCard({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (

@@ -3,10 +3,14 @@
  * Route: /d/:castId
  *
  * Step 1: Fetch Cast metadata → show hook + price
- * Step 2: zkLogin (if not signed in)
- * Step 3: Ensure Harbor funded
- * Step 4: Execute cast::read() TX
- * Step 5: Fetch SEAL key from zkProxy → decrypt → render content
+ * Step 2: zkLogin (if not signed in) — return_to saves /d/:castId
+ * Step 3: Find reader's USDC coins (NO Harbor needed in v13)
+ * Step 4: Execute cast::read() TX — fee splits: author 97%, Abyss 3%+flat
+ * Step 5: POST /cast-decrypt to zkProxy → get key+iv → decrypt content
+ *
+ * ⚠️  COLD-START CAVEAT: Agents have pre-funded USDC. A real human with an
+ * empty wallet will hit "Insufficient USDC" at Step 3 with no in-app funding
+ * flow. The "fund your wallet" UX is NOT yet built. Flag this when testing.
  */
 
 import React, { useEffect, useState } from 'react'
@@ -15,7 +19,7 @@ import { Unlock, Loader2, AlertCircle, Eye, DollarSign } from 'lucide-react'
 import { Transaction } from '@mysten/sui/transactions'
 import { useStore } from '../lib/store'
 import { releaseKey, sealDecrypt } from '../lib/seal'
-import { buildReadCast, fetchCast, findHarbor, baseToUsdc, CastInfo } from '../lib/conk'
+import { buildReadCast, fetchCast, findUsdcCoins, baseToUsdc, CastInfo } from '../lib/conk'
 import { signAndExecute } from '../lib/zkLogin'
 import { ZKPROXY_URL, PROTOCOL_READ_FEE } from '../sui/config'
 import ZkLoginButton from '../components/ZkLoginButton'
@@ -28,10 +32,10 @@ type Step = 'loading' | 'preview' | 'login' | 'unlocking' | 'unlocked' | 'error'
 
 export default function DropPage() {
   const { castId } = useParams<{ castId: string }>()
-  const { session, harborId, setHarborId } = useStore()
+  const { session } = useStore()
 
-  const [cast, setCast] = useState<CastInfo | null>(null)
-  const [step, setStep] = useState<Step>('loading')
+  const [cast, setCast]       = useState<CastInfo | null>(null)
+  const [step, setStep]       = useState<Step>('loading')
   const [content, setContent] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -39,7 +43,7 @@ export default function DropPage() {
     if (!castId) return
     fetchCast(castId)
       .then(c => { setCast(c); setStep('preview') })
-      .catch(e => { setErrorMsg(e.message); setStep('error') })
+      .catch(e => { console.error('[DropPage] fetchCast failed:', e); setErrorMsg(e.message); setStep('error') })
   }, [castId])
 
   async function handleUnlock() {
@@ -48,23 +52,28 @@ export default function DropPage() {
     try {
       setStep('unlocking')
 
-      // Ensure Harbor exists and has enough balance
-      let harbor = harborId ?? await findHarbor(session.address)
-      if (!harbor) throw new Error('No Harbor found. Please fund your wallet first.')
-      setHarborId(harbor)
+      // ── Find reader's USDC coins (v13: no Harbor needed) ──────────────────
+      const totalFee = cast.priceBase + PROTOCOL_READ_FEE
+      const usdcCoins = await findUsdcCoins(session.address)
+      const payerCoin = usdcCoins.find(c => BigInt(c.balance) >= totalFee)
 
-      // We need the author's Harbor ID too
-      // For v1: look it up from the Vessel object
-      const authorHarborId = await fetchAuthorHarborId(cast.authorVesselId)
-      if (!authorHarborId) throw new Error('Could not find author Harbor. The drop may be invalid.')
+      if (!payerCoin) {
+        // ⚠️ COLD-START: Real human buyers hit this wall — no in-app funding yet
+        throw new Error(
+          `Insufficient USDC. Need $${baseToUsdc(totalFee)} to unlock. ` +
+          `Your balance: $${baseToUsdc(usdcCoins.reduce((sum, c) => sum + BigInt(c.balance), 0n))}. ` +
+          `Fund your Sui wallet with USDC and try again.`
+        )
+      }
 
-      // Build and execute read TX
+      // ── Build + sign read TX ───────────────────────────────────────────────
       const tx = new Transaction()
       tx.setSender(session.address)
       buildReadCast(tx, {
         castId,
-        harborId: harbor,
-        authorHarborId,
+        readerAddress: session.address,
+        usdcCoinId:    payerCoin.coinObjectId,
+        priceBase:     cast.priceBase,
       })
 
       const result = await signAndExecute(tx, session)
@@ -75,18 +84,18 @@ export default function DropPage() {
       const txDigest = result.digest
       if (!txDigest) throw new Error('No TX digest returned')
 
-      // Fetch SEAL key from zkProxy (verifies the CastRead event on-chain)
-      const keyB64 = await releaseKey(ZKPROXY_URL, castId, txDigest, session.address)
+      // ── Fetch decryption key from zkProxy ──────────────────────────────────
+      const { keyHex, ivHex } = await releaseKey(ZKPROXY_URL, castId, txDigest, session.address)
 
-      // Decrypt content
+      // ── Decrypt content ─────────────────────────────────────────────────────
       if (!cast.contentBytes || cast.contentBytes.length === 0) {
         throw new Error('Cast has no content to decrypt')
       }
-      const plaintext = await sealDecrypt(cast.contentBytes, keyB64)
+      const plaintext = await sealDecrypt(cast.contentBytes, keyHex, ivHex)
       setContent(plaintext)
       setStep('unlocked')
     } catch (e: any) {
-      console.error(e)
+      console.error('[DropPage] handleUnlock failed:', e)
       setErrorMsg(e.message ?? 'Unknown error')
       setStep('error')
     }
@@ -94,9 +103,9 @@ export default function DropPage() {
 
   if (!castId) return <ErrorView msg="Invalid drop link" />
   if (step === 'loading') return <SpinnerView />
-  if (step === 'error') return <ErrorView msg={errorMsg} onRetry={() => setStep('preview')} />
+  if (step === 'error')   return <ErrorView msg={errorMsg} onRetry={() => { setErrorMsg(''); setStep(cast ? 'preview' : 'loading') }} />
 
-  const totalCostBase = (cast?.priceBase ?? 0n) + PROTOCOL_READ_FEE
+  const totalCostBase    = (cast?.priceBase ?? 0n) + PROTOCOL_READ_FEE
   const totalCostDisplay = baseToUsdc(totalCostBase)
 
   return (
@@ -127,11 +136,12 @@ export default function DropPage() {
         <div className="space-y-4">
           {cast?.isExpired ? (
             <div className="bg-green-900/20 border border-green-800 rounded-xl px-5 py-4 text-sm text-green-300">
-              This drop’s paid window has closed — it’s now free to read.
+              This drop&apos;s paid window has closed — it&apos;s now free to read.
             </div>
           ) : (
             <div className="bg-zinc-900 border border-zinc-700 rounded-xl px-5 py-4 text-sm text-zinc-400">
-              Cost to unlock: <span className="text-white font-medium">${totalCostDisplay} USDC</span>
+              Cost to unlock:{' '}
+              <span className="text-white font-medium">${totalCostDisplay} USDC</span>
               <span className="text-zinc-600 ml-2">
                 (${baseToUsdc(cast?.priceBase ?? 0n)} to creator + $0.001 protocol fee)
               </span>
@@ -149,13 +159,16 @@ export default function DropPage() {
           ) : (
             <div className="space-y-3">
               <p className="text-zinc-500 text-sm text-center">Sign in to unlock this drop</p>
-              <ZkLoginButton onSuccess={handleUnlock} />
+              <ZkLoginButton />
             </div>
           )}
 
           <p className="text-center text-xs text-zinc-600">
-            Encrypted client-side. Settled on-chain. Creator keeps 97%.
-            Powered by <a href="https://conk.app" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition">CONK</a>.
+            Encrypted client-side. Settled on-chain. Creator keeps 97%.{' '}
+            Powered by{' '}
+            <a href="https://conk.app" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition">
+              CONK
+            </a>.
           </p>
         </div>
       )}
@@ -190,16 +203,6 @@ export default function DropPage() {
   )
 }
 
-/** Fetch the Harbor ID belonging to the vessel's owner (needed for read() routing). */
-async function fetchAuthorHarborId(vesselId: string): Promise<string | null> {
-  const { getSuiClient } = await import('../lib/conk')
-  const client = getSuiClient()
-  const obj = await client.getObject({ id: vesselId, options: { showContent: true } })
-  if (!obj.data?.content || obj.data.content.dataType !== 'moveObject') return null
-  const fields = (obj.data.content as any).fields
-  return fields?.harbor_id ?? null
-}
-
 function SpinnerView() {
   return (
     <div className="flex items-center justify-center py-32">
@@ -215,7 +218,10 @@ function ErrorView({ msg, onRetry }: { msg: string; onRetry?: () => void }) {
       <div className="text-white font-medium">Something went wrong</div>
       <div className="text-zinc-500 text-sm font-mono break-all">{msg}</div>
       {onRetry && (
-        <button onClick={onRetry} className="mt-4 px-6 py-2 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition text-sm">
+        <button
+          onClick={onRetry}
+          className="mt-4 px-6 py-2 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition text-sm"
+        >
           Try again
         </button>
       )}

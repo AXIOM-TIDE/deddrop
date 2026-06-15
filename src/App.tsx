@@ -1,8 +1,9 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
+import React, { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
 import CreatePage from './pages/CreatePage'
 import DropPage from './pages/DropPage'
 import { useStore } from './lib/store'
+import { handleZkLoginCallback } from './lib/zkLogin'
 
 function Nav() {
   const { session } = useStore()
@@ -76,9 +77,35 @@ function Landing() {
   )
 }
 
+/**
+ * Handles the Google OAuth return at any route.
+ * Google always redirects to the bare origin (/), but the user may have
+ * started login from /create or /d/:castId — we restore that path after.
+ */
+function ZkCallbackHandler() {
+  const { setSession } = useStore()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!window.location.hash.includes('id_token')) return
+    handleZkLoginCallback()
+      .then(session => {
+        if (!session) return
+        setSession(session)
+        const returnTo = localStorage.getItem('zklogin_return_to') ?? '/create'
+        localStorage.removeItem('zklogin_return_to')
+        navigate(returnTo, { replace: true })
+      })
+      .catch(console.error)
+  }, [])
+
+  return null
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <ZkCallbackHandler />
       <div className="min-h-screen bg-black text-white">
         <Nav />
         <Routes>

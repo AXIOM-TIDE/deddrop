@@ -32,6 +32,9 @@ export async function startZkLogin(): Promise<void> {
 
   const nonce = generateNonce(ephemeralKeypair.getPublicKey(), maxEpoch, randomness)
 
+  // Save the current path so we can return here after the OAuth round-trip
+  localStorage.setItem('zklogin_return_to', window.location.pathname + window.location.search)
+
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: window.location.origin,
