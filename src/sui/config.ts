@@ -12,10 +12,14 @@ export const DRIFT_ID        = '0x9312b6837bb12381849b413636064cd8d56b6ef84bf891
 export const PROTOCOL_CONFIG = '0xdc8e5131d6e3bec492a2e12b1d7beddbfec709ae5def8e775dab59c7a45421ea'
 export const SUI_CLOCK       = '0x0000000000000000000000000000000000000000000000000000000000000006'
 
-export const SUI_RPC         = import.meta.env.VITE_SUI_RPC
-  ?? 'https://conk-zkproxy-v2.italktonumbers.workers.dev/sui'
+const DEFAULT_ZKPROXY_URL = typeof window !== 'undefined'
+  ? `${window.location.origin}/zkproxy`
+  : 'https://conk-zkproxy-v2.italktonumbers.workers.dev'
+
 export const ZKPROXY_URL     = import.meta.env.VITE_ZKPROXY_URL
-  ?? 'https://conk-zkproxy-v2.italktonumbers.workers.dev'
+  ?? DEFAULT_ZKPROXY_URL
+export const SUI_RPC         = import.meta.env.VITE_SUI_RPC
+  ?? `${ZKPROXY_URL}/sui`
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ''
 
 // USDC coin type on Sui mainnet
