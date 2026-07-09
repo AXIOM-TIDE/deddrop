@@ -21,7 +21,7 @@ import { ZKPROXY_URL, PROTOCOL_CAST_FEE } from '../sui/config'
 import ZkLoginButton from '../components/ZkLoginButton'
 import clsx from 'clsx'
 
-type Step = 'compose' | 'login' | 'setup' | 'publishing' | 'done' | 'error'
+type Step = 'compose' | 'login' | 'setup-wallet' | 'setup-identity' | 'publishing' | 'done' | 'error'
 
 export default function CreatePage() {
   const { session, harborId, vesselId, vesselCapId, setHarborId, setVesselId, setVesselCapId, setPendingDrop } = useStore()
@@ -38,25 +38,25 @@ export default function CreatePage() {
     if (!session) { setStep('login'); return }
 
     try {
-      setStep('setup')
-
-      // ── Resolve Vessel + VesselCap ──────────────────────────────────────────
+      // ── Resolve on-chain identity (one-time setup if missing) ───────────────
       let vessel    = vesselId    ?? (await findVessels(session.address))[0]   ?? null
       let vesselCap = vesselCapId ?? await findVesselCap(session.address)
 
       if (!vessel || !vesselCap) {
-        // One-time Harbor + Vessel setup (two TXs — harbor::open transfers Harbor,
-        // can't chain result into vessel::launch in the same PTB).
+        // Two TXs: Drop Wallet first, then publishing identity.
+        // (harbor::open transfers the object; can't chain into vessel::launch in one PTB)
         let harbor = harborId ?? await findHarbor(session.address)
 
         if (!harbor) {
-          // TX 1: Create Harbor (costs HARBOR_TIER1_TOTAL = $0.15)
+          // TX 1: Fund Drop Wallet ($0.15 USDC — user's balance, not a fee)
+          setStep('setup-wallet')
           const usdcCoins = await findUsdcCoins(session.address)
           const largestCoin = usdcCoins[0]
           if (!largestCoin || BigInt(largestCoin.balance) < 150_000n) {
             throw new Error(
-              'Harbor setup requires $0.15 USDC minimum. ' +
-              'Fund your wallet with USDC on Sui mainnet first.'
+              'Your Drop Wallet needs $0.15 USDC to get started. ' +
+              "That's your balance on-chain — not a fee. " +
+              'Add USDC to your Sui wallet and try again.'
             )
           }
           const tx1 = new Transaction()
@@ -65,23 +65,24 @@ export default function CreatePage() {
           tx1.transferObjects([harborCap], tx1.pure.address(session.address))
           const r1 = await signAndExecute(tx1, session)
           if (r1.effects?.status?.status !== 'success') {
-            throw new Error('Harbor setup TX failed: ' + JSON.stringify(r1.effects?.status))
+            throw new Error('Drop Wallet setup failed: ' + JSON.stringify(r1.effects?.status))
           }
           harbor = await findHarbor(session.address)
           if (harbor) { setHarborId(harbor) }
         }
 
-        if (!harbor) throw new Error('Harbor not found after setup. Please try again.')
+        if (!harbor) throw new Error('Drop Wallet not found after setup. Please try again.')
 
         if (!vessel || !vesselCap) {
-          // TX 2: Create Vessel
+          // TX 2: Create publishing identity (free, one-time)
+          setStep('setup-identity')
           const tx2 = new Transaction()
           tx2.setSender(session.address)
           const [cap] = buildLaunchVessel(tx2, harbor)
           tx2.transferObjects([cap], tx2.pure.address(session.address))
           const r2 = await signAndExecute(tx2, session)
           if (r2.effects?.status?.status !== 'success') {
-            throw new Error('Vessel setup TX failed: ' + JSON.stringify(r2.effects?.status))
+            throw new Error('Identity setup failed: ' + JSON.stringify(r2.effects?.status))
           }
           vessel    = (await findVessels(session.address))[0] ?? null
           vesselCap = await findVesselCap(session.address)
@@ -92,7 +93,7 @@ export default function CreatePage() {
       if (vesselCap) setVesselCapId(vesselCap)
 
       if (!vessel || !vesselCap) {
-        throw new Error('Vessel setup incomplete. Refresh and try again.')
+        throw new Error('Setup incomplete. Refresh and try again.')
       }
 
       setStep('publishing')
@@ -102,8 +103,8 @@ export default function CreatePage() {
       const payerCoin = usdcCoins[0]
       if (!payerCoin || BigInt(payerCoin.balance) < PROTOCOL_CAST_FEE) {
         throw new Error(
-          `Insufficient USDC. Need at least $0.001 to publish a drop. ` +
-          `Balance: $${(Number(payerCoin?.balance ?? 0) / 1e6).toFixed(4)}`
+          `Not enough USDC. Publishing a drop costs $0.001. ` +
+          `Your balance: $${(Number(payerCoin?.balance ?? 0) / 1e6).toFixed(4)}`
         )
       }
 
@@ -244,6 +245,15 @@ export default function CreatePage() {
             <span className="text-zinc-300">97% to you.</span> 3% protocol fee. Encrypted client-side before anything leaves your browser.
           </div>
 
+          {/* Drop Wallet note (first-time setup) */}
+          {!harborId && (
+            <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm text-zinc-500">
+              <span className="text-zinc-300">First drop?</span>{' '}
+              We’ll load your Drop Wallet — a $0.15 USDC deposit that powers your drops.
+              It’s your balance on Sui, not a fee. Withdraw it anytime.
+            </div>
+          )}
+
           {/* CTA */}
           {session ? (
             <button
@@ -260,18 +270,26 @@ export default function CreatePage() {
             </button>
           ) : (
             <div className="space-y-3">
-              <p className="text-zinc-500 text-sm text-center">Sign in to publish your drop</p>
+              <p className="text-zinc-500 text-sm text-center">Sign in with Google to publish your drop</p>
               <ZkLoginButton />
             </div>
           )}
         </div>
       )}
 
-      {step === 'setup' && (
+      {step === 'setup-wallet' && (
         <StatusCard
           icon={<Loader2 className="animate-spin" />}
-          title="Setting up your Vessel…"
-          subtitle="One-time on-chain setup. This only happens once per wallet."
+          title="Loading your Drop Wallet…"
+          subtitle="Depositing $0.15 USDC on-chain — your balance, not a fee. One-time only."
+        />
+      )}
+
+      {step === 'setup-identity' && (
+        <StatusCard
+          icon={<Loader2 className="animate-spin" />}
+          title="Finishing setup…"
+          subtitle="One more transaction. This only happens once."
         />
       )}
 
@@ -279,7 +297,7 @@ export default function CreatePage() {
         <StatusCard
           icon={<Loader2 className="animate-spin" />}
           title="Encrypting &amp; publishing…"
-          subtitle="Encrypting client-side, sounding Cast on Sui."
+          subtitle="Content encrypted in your browser, publishing on Sui."
         />
       )}
 
@@ -303,12 +321,12 @@ export default function CreatePage() {
               </div>
             </div>
             <div>
-              <div className="text-xs text-zinc-500 mb-1 uppercase tracking-wide">Cast ID</div>
+              <div className="text-xs text-zinc-500 mb-1 uppercase tracking-wide">Drop ID</div>
               <code className="text-zinc-400 text-xs break-all">{castId}</code>
             </div>
             <div className="text-sm text-zinc-400">
-              Locked for <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
-              After that, it&apos;s freely readable.
+              Paid window: <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
+              Goes public (free to read) after that.
             </div>
           </div>
           <button

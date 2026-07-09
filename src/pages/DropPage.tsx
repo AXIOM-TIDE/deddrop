@@ -60,9 +60,9 @@ export default function DropPage() {
       if (!payerCoin) {
         // ⚠️ COLD-START: Real human buyers hit this wall — no in-app funding yet
         throw new Error(
-          `Insufficient USDC. Need $${baseToUsdc(totalFee)} to unlock. ` +
-          `Your balance: $${baseToUsdc(usdcCoins.reduce((sum, c) => sum + BigInt(c.balance), 0n))}. ` +
-          `Fund your Sui wallet with USDC and try again.`
+          `Not enough USDC to unlock. Need $${baseToUsdc(totalFee)}, ` +
+          `you have $${baseToUsdc(usdcCoins.reduce((sum, c) => sum + BigInt(c.balance), 0n))}. ` +
+          `Add USDC to your Sui wallet and try again.`
         )
       }
 
@@ -143,7 +143,7 @@ export default function DropPage() {
               Cost to unlock:{' '}
               <span className="text-white font-medium">${totalCostDisplay} USDC</span>
               <span className="text-zinc-600 ml-2">
-                (${baseToUsdc(cast?.priceBase ?? 0n)} to creator + $0.001 protocol fee)
+                (${baseToUsdc(cast?.priceBase ?? 0n)} to creator + $0.001 network fee)
               </span>
             </div>
           )}
@@ -158,7 +158,7 @@ export default function DropPage() {
             </button>
           ) : (
             <div className="space-y-3">
-              <p className="text-zinc-500 text-sm text-center">Sign in to unlock this drop</p>
+              <p className="text-zinc-500 text-sm text-center">Sign in with Google to unlock this drop</p>
               <ZkLoginButton />
             </div>
           )}
@@ -178,7 +178,7 @@ export default function DropPage() {
           <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
           <div className="text-center">
             <div className="text-white font-medium">Verifying payment…</div>
-            <div className="text-zinc-500 text-sm mt-1">Confirming on-chain, fetching decryption key</div>
+            <div className="text-zinc-500 text-sm mt-1">Confirming on-chain, retrieving your access key</div>
           </div>
         </div>
       )}
@@ -195,7 +195,7 @@ export default function DropPage() {
             </pre>
           </div>
           <p className="text-xs text-zinc-600 text-center">
-            Decrypted in your browser. Never passed through any server.
+            Decrypted in your browser. Never transmitted through any server.
           </p>
         </div>
       )}

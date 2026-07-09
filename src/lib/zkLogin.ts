@@ -77,22 +77,20 @@ export async function handleZkLoginCallback(): Promise<ZkLoginSession | null> {
   const ephemeralKeypair = Ed25519Keypair.fromSecretKey(secretKey)
   const extendedKeyB64 = btoa(String.fromCharCode(...ephemeralKeypair.getPublicKey().toSuiBytes()))
 
+  // Route ZK proof through zkProxy — keeps Enoki key server-side, avoids CORS issues
   let proof: unknown = null
   try {
-    const resp = await fetch('https://api.enoki.mystenlabs.com/v1/zklogin/zkp', {
+    const resp = await fetch(`${ZKPROXY_URL}/zkproof`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'zklogin-jwt': jwt,
-        'Authorization': 'Bearer enoki_public_fa10b08a0bbb5415b2a78850aba85c8c',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        network: 'mainnet',
+        jwt,
+        network:            'mainnet',
         ephemeralPublicKey: extendedKeyB64,
         maxEpoch,
         randomness,
-        salt: BigInt('0x' + salt).toString(),
-        keyClaimName: 'sub',
+        salt:               BigInt('0x' + salt).toString(),
+        keyClaimName:       'sub',
       }),
     })
     if (resp.ok) proof = (await resp.json()).data
