@@ -82,7 +82,7 @@ export async function handleZkLoginCallback(): Promise<ZkLoginSession | null> {
   try {
     const resp = await fetch(`${ZKPROXY_URL}/zkproof`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-App': 'deddrop' },
       body: JSON.stringify({
         jwt,
         network:            'mainnet',
