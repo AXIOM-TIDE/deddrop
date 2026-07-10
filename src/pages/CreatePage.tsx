@@ -1,13 +1,10 @@
 /**
- * CreatePage — Creator flow
+ * CreatePage — Creator flow (tradecraft redesign)
  *
- * Step 1: Enter content + set price
- * Step 2: zkLogin (if not already signed in)
- * Step 3: Ensure Vessel + VesselCap exist (one-time setup)
- * Step 4: Encrypt → sound Cast (v13 API) → register SEAL key → show share link
+ * Steps: compose → login → fund-wallet → setup-wallet → setup-identity → publishing → done → error
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Transaction } from '@mysten/sui/transactions'
 import { Lock, DollarSign, Share2, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -19,9 +16,50 @@ import {
 import { signAndExecute } from '../lib/zkLogin'
 import { ZKPROXY_URL, PROTOCOL_CAST_FEE } from '../sui/config'
 import ZkLoginButton from '../components/ZkLoginButton'
-import clsx from 'clsx'
+import FundingScreen from '../components/FundingScreen'
 
-type Step = 'compose' | 'login' | 'setup-wallet' | 'setup-identity' | 'publishing' | 'done' | 'error'
+type Step = 'compose' | 'login' | 'fund-wallet' | 'setup-wallet' | 'setup-identity' | 'publishing' | 'done' | 'error'
+
+const DROP_EXPIRY_DAYS_DISPLAY = 7
+
+// ── Shared style tokens ──────────────────────────────────────────────────────
+const S = {
+  surface:    '#111114',
+  surfaceHi:  '#161619',
+  border:     '#1e1e26',
+  borderHi:   '#2c2c38',
+  bg:         '#0c0c0e',
+  textPri:    '#f0ede6',
+  textSec:    '#9898a8',
+  textMuted:  '#525260',
+  amber:      '#c8a96e',
+  amberDim:   '#7a6440',
+  steel:      '#4a7fa5',
+  steelDim:   '#2a4a62',
+  green:      '#6abf85',
+  red:        '#c84a4a',
+  mono:       "'JetBrains Mono', 'Fira Code', 'Courier New', monospace" as const,
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: '10px', letterSpacing: '0.2em', textTransform: 'uppercase', color: S.textMuted, marginBottom: '6px' }}>
+      {children}
+    </div>
+  )
+}
+
+function StatusCard({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: '16px', textAlign: 'center' }}>
+      <div style={{ color: S.amber, width: '32px', height: '32px' }}>{icon}</div>
+      <div>
+        <div style={{ color: S.textPri, fontWeight: 600, fontSize: '17px' }} dangerouslySetInnerHTML={{ __html: title }} />
+        <div style={{ color: S.textMuted, fontSize: '13px', marginTop: '4px' }}>{subtitle}</div>
+      </div>
+    </div>
+  )
+}
 
 export default function CreatePage() {
   const { session, harborId, vesselId, vesselCapId, setHarborId, setVesselId, setVesselCapId, setPendingDrop } = useStore()
@@ -33,31 +71,29 @@ export default function CreatePage() {
   const [castId, setCastId]             = useState<string | null>(null)
   const [errorMsg, setErrorMsg]         = useState('')
 
+  // Log wallet address once when session is available
+  useEffect(() => {
+    if (session?.address) console.log('[DEDDROP] zkLogin wallet:', session.address)
+  }, [session?.address])
+
   async function handlePublish() {
     if (!content.trim() || !hook.trim()) return
     if (!session) { setStep('login'); return }
 
     try {
-      // ── Resolve on-chain identity (one-time setup if missing) ───────────────
       let vessel    = vesselId    ?? (await findVessels(session.address))[0]   ?? null
       let vesselCap = vesselCapId ?? await findVesselCap(session.address)
 
       if (!vessel || !vesselCap) {
-        // Two TXs: Drop Wallet first, then publishing identity.
-        // (harbor::open transfers the object; can't chain into vessel::launch in one PTB)
         let harbor = harborId ?? await findHarbor(session.address)
 
         if (!harbor) {
-          // TX 1: Fund Drop Wallet ($0.15 USDC — user's balance, not a fee)
           setStep('setup-wallet')
-          const usdcCoins = await findUsdcCoins(session.address)
+          const usdcCoins   = await findUsdcCoins(session.address)
           const largestCoin = usdcCoins[0]
           if (!largestCoin || BigInt(largestCoin.balance) < 150_000n) {
-            throw new Error(
-              'Your Drop Wallet needs $0.15 USDC to get started. ' +
-              "That's your balance on-chain — not a fee. " +
-              'Add USDC to your Sui wallet and try again.'
-            )
+            setStep('fund-wallet')
+            return
           }
           const tx1 = new Transaction()
           tx1.setSender(session.address)
@@ -68,13 +104,12 @@ export default function CreatePage() {
             throw new Error('Drop Wallet setup failed: ' + JSON.stringify(r1.effects?.status))
           }
           harbor = await findHarbor(session.address)
-          if (harbor) { setHarborId(harbor) }
+          if (harbor) setHarborId(harbor)
         }
 
         if (!harbor) throw new Error('Drop Wallet not found after setup. Please try again.')
 
         if (!vessel || !vesselCap) {
-          // TX 2: Create publishing identity (free, one-time)
           setStep('setup-identity')
           const tx2 = new Transaction()
           tx2.setSender(session.address)
@@ -92,13 +127,10 @@ export default function CreatePage() {
       if (vessel)    setVesselId(vessel)
       if (vesselCap) setVesselCapId(vesselCap)
 
-      if (!vessel || !vesselCap) {
-        throw new Error('Setup incomplete. Refresh and try again.')
-      }
+      if (!vessel || !vesselCap) throw new Error('Setup incomplete. Refresh and try again.')
 
       setStep('publishing')
 
-      // ── Find USDC coin for cast publication fee ─────────────────────────────
       const usdcCoins = await findUsdcCoins(session.address)
       const payerCoin = usdcCoins[0]
       if (!payerCoin || BigInt(payerCoin.balance) < PROTOCOL_CAST_FEE) {
@@ -108,19 +140,17 @@ export default function CreatePage() {
         )
       }
 
-      // ── Encrypt content ─────────────────────────────────────────────────────
       const { ciphertext, keyHex, ivHex } = await sealEncrypt(content)
 
-      // ── Build + sign sound TX ──────────────────────────────────────────────
       const tx = new Transaction()
       tx.setSender(session.address)
       buildSoundCast(tx, {
-        vesselId:   vessel,
+        vesselId:    vessel,
         vesselCapId: vesselCap,
-        hook:       hook.slice(0, 120),
+        hook:        hook.slice(0, 120),
         ciphertext,
-        priceBase:  usdcToBase(priceDisplay),
-        usdcCoinId: payerCoin.coinObjectId,
+        priceBase:   usdcToBase(priceDisplay),
+        usdcCoinId:  payerCoin.coinObjectId,
       })
 
       const result = await signAndExecute(tx, session)
@@ -128,7 +158,6 @@ export default function CreatePage() {
         throw new Error('Cast sound TX failed: ' + JSON.stringify(result.effects?.status))
       }
 
-      // ── Extract castId from CastSounded event ──────────────────────────────
       const soundEvent = result.events?.find(e =>
         (e.type as string)?.endsWith('::cast::CastSounded')
       )
@@ -137,12 +166,9 @@ export default function CreatePage() {
         : null
 
       if (!newCastId) {
-        // Fallback: find shared Cast object in created objects
         const created = result.effects?.created ?? []
         const castObj = created.find(o => (o.owner as any)?.Shared !== undefined)
-        if (!castObj?.reference?.objectId) {
-          throw new Error('Could not find Cast object ID in TX result')
-        }
+        if (!castObj?.reference?.objectId) throw new Error('Could not find Cast object ID in TX result')
         setCastId(castObj.reference.objectId)
       } else {
         setCastId(newCastId)
@@ -155,10 +181,8 @@ export default function CreatePage() {
 
       if (!finalCastId) throw new Error('Could not resolve Cast ID from TX result')
 
-      // ── Register SEAL key with zkProxy ─────────────────────────────────────
       await registerKey(ZKPROXY_URL, finalCastId, keyHex, ivHex)
 
-      // ── Persist pending drop (survives refresh before link is copied) ──────
       setPendingDrop({
         hook,
         priceDisplay,
@@ -179,78 +203,121 @@ export default function CreatePage() {
   const shareUrl = castId ? `${window.location.origin}/d/${castId}` : null
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-16">
-      <div className="mb-10">
-        <h1 className="text-2xl font-bold text-white mb-1">Create a drop</h1>
-        <p className="text-zinc-400 text-sm">
+    <div style={{ maxWidth: '672px', margin: '0 auto', padding: '64px 16px' }}>
+
+      {/* Header */}
+      <div style={{ marginBottom: '40px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: 700, color: S.textPri, marginBottom: '4px' }}>
+          Create a dead drop
+        </h1>
+        <p style={{ color: S.textMuted, fontSize: '13px' }}>
           Paste your content. Set a price. Get a link. You keep 97%.
         </p>
       </div>
 
+      {/* Compose / Login */}
       {(step === 'compose' || step === 'login') && (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
           {/* Hook */}
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
-              Public preview <span className="text-zinc-500">(what buyers see before paying)</span>
-            </label>
+            <Label>Public preview <span style={{ color: S.textMuted, textTransform: 'none', letterSpacing: 0 }}>(what buyers see before paying)</span></Label>
             <input
               type="text"
               maxLength={120}
               value={hook}
               onChange={e => setHook(e.target.value)}
               placeholder="A system prompt that makes GPT-4 act as a senior quant…"
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition"
+              style={{
+                width: '100%',
+                background: S.surface,
+                border: `1px solid ${S.border}`,
+                borderRadius: '8px',
+                padding: '12px 16px',
+                color: S.textPri,
+                fontSize: '14px',
+                outline: 'none',
+                transition: 'border-color 0.15s',
+              }}
+              onFocus={e => (e.target.style.borderColor = S.amber)}
+              onBlur={e => (e.target.style.borderColor = S.border)}
             />
-            <div className="text-right text-xs text-zinc-600 mt-1">{hook.length}/120</div>
+            <div style={{ textAlign: 'right', fontSize: '11px', color: S.textMuted, marginTop: '4px' }}>{hook.length}/120</div>
           </div>
 
           {/* Content */}
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
-              Content <span className="text-zinc-500">(encrypted — only paying readers see this)</span>
-            </label>
+            <Label>Content <span style={{ color: S.textMuted, textTransform: 'none', letterSpacing: 0 }}>(encrypted — only paying readers see this)</span></Label>
             <textarea
               rows={10}
               value={content}
               onChange={e => setContent(e.target.value)}
               placeholder="Paste your prompt, research, alpha, or any text content here…"
-              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition font-mono text-sm resize-none"
+              style={{
+                width: '100%',
+                background: S.surface,
+                border: `1px solid ${S.border}`,
+                borderRadius: '8px',
+                padding: '12px 16px',
+                color: S.textPri,
+                fontSize: '13px',
+                outline: 'none',
+                resize: 'none',
+                fontFamily: S.mono,
+                transition: 'border-color 0.15s',
+              }}
+              onFocus={e => (e.target.style.borderColor = S.amber)}
+              onBlur={e => (e.target.style.borderColor = S.border)}
             />
           </div>
 
           {/* Price */}
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">
-              Price per unlock (USDC)
-            </label>
-            <div className="flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-zinc-500" />
+            <Label>Price per unlock (USDC)</Label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <DollarSign style={{ width: '16px', height: '16px', color: S.textMuted }} />
               <input
                 type="number"
                 step="0.01"
                 min="0.01"
                 value={priceDisplay}
                 onChange={e => setPriceDisplay(e.target.value)}
-                className="bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-cyan-500 transition w-32"
+                style={{
+                  background: S.surface,
+                  border: `1px solid ${S.border}`,
+                  borderRadius: '8px',
+                  padding: '12px 16px',
+                  color: S.textPri,
+                  fontSize: '14px',
+                  fontFamily: S.mono,
+                  outline: 'none',
+                  width: '120px',
+                  transition: 'border-color 0.15s',
+                }}
+                onFocus={e => (e.target.style.borderColor = S.amber)}
+                onBlur={e => (e.target.style.borderColor = S.border)}
               />
-              <span className="text-zinc-500 text-sm">
-                You receive ${(parseFloat(priceDisplay || '0') * 0.97).toFixed(4)} per unlock (97%)
+              <span style={{ color: S.textMuted, fontSize: '13px' }}>
+                You receive{' '}
+                <span style={{ fontFamily: S.mono, color: S.textSec }}>
+                  ${(parseFloat(priceDisplay || '0') * 0.97).toFixed(4)}
+                </span>{' '}
+                per unlock (97%)
               </span>
             </div>
           </div>
 
           {/* Fee note */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400">
-            <span className="text-zinc-300">97% to you.</span> 3% protocol fee. Encrypted client-side before anything leaves your browser.
+          <div style={{ background: S.surface, border: `1px solid ${S.border}`, borderRadius: '8px', padding: '12px 16px', fontSize: '13px', color: S.textSec }}>
+            <span style={{ color: S.textPri }}>97% to you.</span> 3% protocol fee. Encrypted client-side before anything leaves your browser.
           </div>
 
-          {/* Drop Wallet note (first-time setup) */}
+          {/* First drop note */}
           {!harborId && (
-            <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm text-zinc-500">
-              <span className="text-zinc-300">First drop?</span>{' '}
-              We’ll load your Drop Wallet — a $0.15 USDC deposit that powers your drops.
-              It’s your balance on Sui, not a fee. Withdraw it anytime.
+            <div style={{ background: S.surface, border: `1px solid ${S.borderHi}`, borderRadius: '8px', padding: '12px 16px', fontSize: '13px', color: S.textMuted }}>
+              <span style={{ color: S.textSec }}>First drop?</span>{' '}
+              We'll provision your field account — a $0.15 USDC deposit that powers your drops.
+              It's your balance on Sui, not a fee. Withdraw it anytime.
             </div>
           )}
 
@@ -259,116 +326,171 @@ export default function CreatePage() {
             <button
               onClick={handlePublish}
               disabled={!content.trim() || !hook.trim() || !priceDisplay}
-              className={clsx(
-                'w-full py-4 rounded-xl font-semibold text-base transition',
-                content.trim() && hook.trim() && priceDisplay
-                  ? 'bg-cyan-500 hover:bg-cyan-400 text-black'
-                  : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
-              )}
+              style={{
+                width: '100%',
+                padding: '16px',
+                borderRadius: '12px',
+                border: 'none',
+                cursor: (content.trim() && hook.trim() && priceDisplay) ? 'pointer' : 'not-allowed',
+                background: (content.trim() && hook.trim() && priceDisplay) ? S.steel : S.surface,
+                color: (content.trim() && hook.trim() && priceDisplay) ? S.textPri : S.textMuted,
+                fontWeight: 600,
+                fontSize: '15px',
+                transition: 'background 0.15s',
+              }}
             >
-              Encrypt &amp; Publish
+              Encrypt &amp; Conceal
             </button>
           ) : (
-            <div className="space-y-3">
-              <p className="text-zinc-500 text-sm text-center">Sign in with Google to publish your drop</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <p style={{ color: S.textMuted, fontSize: '13px', textAlign: 'center' }}>Authenticate to conceal your drop</p>
               <ZkLoginButton />
             </div>
           )}
         </div>
       )}
 
+      {/* Fund wallet step */}
+      {step === 'fund-wallet' && session && (
+        <FundingScreen
+          address={session.address}
+          minBalance={150_000n}
+          onFunded={handlePublish}
+        />
+      )}
+
       {step === 'setup-wallet' && (
         <StatusCard
-          icon={<Loader2 className="animate-spin" />}
-          title="Loading your Drop Wallet…"
+          icon={<Loader2 style={{ width: '32px', height: '32px', animation: 'spin 1s linear infinite' }} />}
+          title="Provisioning account…"
           subtitle="Depositing $0.15 USDC on-chain — your balance, not a fee. One-time only."
         />
       )}
 
       {step === 'setup-identity' && (
         <StatusCard
-          icon={<Loader2 className="animate-spin" />}
-          title="Finishing setup…"
+          icon={<Loader2 style={{ width: '32px', height: '32px', animation: 'spin 1s linear infinite' }} />}
+          title="Initializing identity…"
           subtitle="One more transaction. This only happens once."
         />
       )}
 
       {step === 'publishing' && (
         <StatusCard
-          icon={<Loader2 className="animate-spin" />}
+          icon={<Loader2 style={{ width: '32px', height: '32px', animation: 'spin 1s linear infinite' }} />}
           title="Encrypting &amp; publishing…"
           subtitle="Content encrypted in your browser, publishing on Sui."
         />
       )}
 
       {step === 'done' && shareUrl && (
-        <div className="space-y-6">
-          <div className="flex items-center gap-3 text-green-400">
-            <CheckCircle className="w-6 h-6" />
-            <span className="text-lg font-semibold">Drop is live</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: S.amber }}>
+            <CheckCircle style={{ width: '22px', height: '22px' }} />
+            <span style={{ fontSize: '18px', fontWeight: 700 }}>Dead drop active</span>
           </div>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 space-y-4">
+
+          <div style={{ background: S.surface, border: `1px solid ${S.border}`, borderRadius: '12px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
-              <div className="text-xs text-zinc-500 mb-1 uppercase tracking-wide">Share link</div>
-              <div className="flex items-center gap-3">
-                <code className="flex-1 text-cyan-400 text-sm break-all">{shareUrl}</code>
+              <Label>Transmission coordinates</Label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <code style={{ flex: 1, fontFamily: S.mono, fontSize: '13px', color: S.steel, wordBreak: 'break-all' }}>
+                  {shareUrl}
+                </code>
                 <button
                   onClick={() => navigator.clipboard.writeText(shareUrl)}
-                  className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition"
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    background: S.surfaceHi,
+                    border: `1px solid ${S.border}`,
+                    cursor: 'pointer',
+                    transition: 'background 0.15s',
+                  }}
                 >
-                  <Share2 className="w-4 h-4 text-zinc-300" />
+                  <Share2 style={{ width: '14px', height: '14px', color: S.textSec }} />
                 </button>
               </div>
             </div>
+
             <div>
-              <div className="text-xs text-zinc-500 mb-1 uppercase tracking-wide">Drop ID</div>
-              <code className="text-zinc-400 text-xs break-all">{castId}</code>
+              <Label>Cast ID</Label>
+              <code style={{ fontFamily: S.mono, fontSize: '11px', color: S.textMuted, wordBreak: 'break-all' }}>
+                {castId}
+              </code>
             </div>
-            <div className="text-sm text-zinc-400">
-              Paid window: <span className="text-white">{DROP_EXPIRY_DAYS_DISPLAY} days</span> at ${priceDisplay}/unlock.
-              Goes public (free to read) after that.
+
+            <div style={{ fontSize: '13px', color: S.textSec }}>
+              Paid window:{' '}
+              <span style={{ color: S.textPri }}>{DROP_EXPIRY_DAYS_DISPLAY} days</span>
+              {' '}at{' '}
+              <span style={{ fontFamily: S.mono, color: S.textPri }}>${priceDisplay}</span>
+              /unlock. Goes public (free to read) after that.
             </div>
           </div>
+
           <button
             onClick={() => { setStep('compose'); setContent(''); setHook(''); setCastId(null) }}
-            className="w-full py-3 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition"
+            style={{
+              width: '100%',
+              padding: '12px',
+              borderRadius: '12px',
+              border: `1px solid ${S.border}`,
+              background: 'transparent',
+              color: S.textSec,
+              cursor: 'pointer',
+              fontSize: '14px',
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = S.surface)}
+            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
           >
-            Create another drop
+            Create another dead drop
           </button>
         </div>
       )}
 
       {step === 'error' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 text-red-400">
-            <AlertCircle className="w-5 h-5" />
-            <span className="font-semibold">Something went wrong</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: S.red }}>
+            <AlertCircle style={{ width: '18px', height: '18px' }} />
+            <span style={{ fontWeight: 600 }}>Transmission failed</span>
           </div>
-          <div className="bg-zinc-900 border border-red-900 rounded-lg px-4 py-3 text-red-300 text-sm font-mono break-all">
+          <div
+            style={{
+              background: S.surface,
+              border: `1px solid ${S.red}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              color: S.red,
+              fontSize: '13px',
+              fontFamily: S.mono,
+              wordBreak: 'break-all',
+            }}
+          >
             {errorMsg}
           </div>
           <button
             onClick={() => setStep('compose')}
-            className="w-full py-3 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition"
+            style={{
+              width: '100%',
+              padding: '12px',
+              borderRadius: '12px',
+              border: `1px solid ${S.border}`,
+              background: 'transparent',
+              color: S.textSec,
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
           >
             Try again
           </button>
         </div>
       )}
-    </div>
-  )
-}
 
-const DROP_EXPIRY_DAYS_DISPLAY = 7  // matches DUR_7D
-
-function StatusCard({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
-      <div className="text-cyan-400 w-8 h-8">{icon}</div>
-      <div>
-        <div className="text-white font-semibold text-lg" dangerouslySetInnerHTML={{ __html: title }} />
-        <div className="text-zinc-500 text-sm mt-1">{subtitle}</div>
-      </div>
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   )
 }

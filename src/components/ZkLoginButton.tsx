@@ -1,11 +1,10 @@
 /**
  * ZkLoginButton — "Continue with Google" → derived Sui address, no seed phrase
- * Wraps the zkLogin flow from conk.app
+ * Tradecraft dark style.
  */
 
 import React, { useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import { useStore } from '../lib/store'
 import { startZkLogin } from '../lib/zkLogin'
 
 interface Props {
@@ -14,12 +13,12 @@ interface Props {
 
 export default function ZkLoginButton({ onSuccess }: Props) {
   const [loading, setLoading] = useState(false)
+  const [hovered, setHovered] = useState(false)
 
   async function handleClick() {
     setLoading(true)
     try {
       await startZkLogin()
-      // Page will redirect to Google; loading stays true
     } catch (e) {
       console.error(e)
       setLoading(false)
@@ -30,14 +29,35 @@ export default function ZkLoginButton({ onSuccess }: Props) {
     <button
       onClick={handleClick}
       disabled={loading}
-      className="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-white hover:bg-zinc-100 text-black font-medium transition disabled:opacity-60"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '12px',
+        padding: '14px',
+        borderRadius: '12px',
+        background: '#111114',
+        border: `1px solid ${hovered ? '#c8a96e' : '#2c2c38'}`,
+        color: '#f0ede6',
+        fontWeight: 500,
+        fontSize: '14px',
+        cursor: loading ? 'not-allowed' : 'pointer',
+        opacity: loading ? 0.6 : 1,
+        transition: 'border-color 0.15s',
+      }}
     >
       {loading ? (
-        <Loader2 className="w-5 h-5 animate-spin" />
+        <Loader2 style={{ width: '20px', height: '20px', animation: 'spin 1s linear infinite' }} />
       ) : (
         <GoogleIcon />
       )}
       Continue with Google
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
     </button>
   )
 }

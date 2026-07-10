@@ -10,21 +10,68 @@ function Nav() {
   const loc = useLocation()
 
   return (
-    <nav className="border-b border-zinc-800 px-4 py-4">
-      <div className="max-w-2xl mx-auto flex items-center justify-between">
-        <Link to="/" className="text-white font-bold tracking-tight text-lg">
+    <nav
+      style={{
+        background: '#0c0c0e',
+        borderBottom: '1px solid #1e1e26',
+        padding: '0 16px',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: '672px',
+          margin: '0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          height: '56px',
+        }}
+      >
+        <Link
+          to="/"
+          style={{
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
+            fontWeight: 700,
+            fontSize: '15px',
+            letterSpacing: '0.12em',
+            color: '#c8a96e',
+            textDecoration: 'none',
+          }}
+        >
           DEDDROP
         </Link>
-        <div className="flex items-center gap-4">
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           {loc.pathname !== '/' && (
-            <Link to="/create" className="text-sm text-zinc-400 hover:text-white transition">
-              Create a drop
+            <Link
+              to="/create"
+              style={{
+                fontSize: '13px',
+                color: '#525260',
+                textDecoration: 'none',
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = '#f0ede6')}
+              onMouseLeave={e => (e.currentTarget.style.color = '#525260')}
+            >
+              Create a dead drop
             </Link>
           )}
           {session && (
-            <span className="text-xs text-zinc-600 font-mono">
-              {session.address.slice(0, 6)}…{session.address.slice(-4)}
-            </span>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '9px', letterSpacing: '0.2em', textTransform: 'uppercase', color: '#525260', marginBottom: '1px' }}>
+                Field ID
+              </div>
+              <span
+                style={{
+                  fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
+                  fontSize: '10px',
+                  color: '#525260',
+                }}
+              >
+                {session.address.slice(0, 6)}…{session.address.slice(-4)}
+              </span>
+            </div>
           )}
         </div>
       </div>
@@ -34,42 +81,97 @@ function Nav() {
 
 function Landing() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-24 text-center space-y-8">
-      <div>
-        <h1 className="text-5xl font-bold text-white leading-tight mb-4 tracking-tight">
-          Lock it. Link it.<br />Get paid.
+    <div style={{ maxWidth: '672px', margin: '0 auto', padding: '80px 16px', textAlign: 'center' }}>
+      <div style={{ marginBottom: '40px' }}>
+        <h1
+          style={{
+            fontSize: '44px',
+            fontWeight: 800,
+            color: '#f0ede6',
+            lineHeight: 1.15,
+            marginBottom: '16px',
+            letterSpacing: '-0.02em',
+          }}
+        >
+          Lock it.{' '}
+          <span style={{ color: '#c8a96e' }}>Link it.</span>
+          <br />Collect.
         </h1>
-        <p className="text-zinc-400 text-lg max-w-md mx-auto">
-          Anonymous paid drops. Paste anything. Set a price.
-          Share a link. You keep 97%.
+        <p style={{ color: '#9898a8', fontSize: '16px', maxWidth: '400px', margin: '0 auto', lineHeight: 1.6 }}>
+          Anonymous paid dead drops. Paste anything. Set a price. Share a link. You keep 97%.
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '48px' }}>
         <Link
           to="/create"
-          className="px-8 py-4 bg-white hover:bg-zinc-100 text-black font-semibold rounded-xl transition"
+          style={{
+            padding: '14px 32px',
+            background: '#4a7fa5',
+            color: '#f0ede6',
+            fontWeight: 600,
+            fontSize: '15px',
+            borderRadius: '12px',
+            textDecoration: 'none',
+            transition: 'background 0.15s',
+            display: 'inline-block',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = '#5a8fb5')}
+          onMouseLeave={e => (e.currentTarget.style.background = '#4a7fa5')}
         >
-          Create a drop →
+          Create a dead drop →
         </Link>
       </div>
 
-      <div className="grid grid-cols-3 gap-6 text-center pt-4">
+      {/* Stats grid */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '12px',
+          marginBottom: '48px',
+        }}
+      >
         {[
           ['97%', 'to you, every time'],
           ['Anonymous', 'no account required'],
           ['Instant', 'on-chain settlement'],
         ].map(([val, label]) => (
-          <div key={val}>
-            <div className="text-xl font-bold text-white">{val}</div>
-            <div className="text-xs text-zinc-500 mt-1">{label}</div>
+          <div
+            key={val}
+            style={{
+              background: '#111114',
+              border: '1px solid #1e1e26',
+              borderRadius: '12px',
+              padding: '20px 12px',
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
+                fontSize: '20px',
+                fontWeight: 700,
+                color: '#c8a96e',
+                marginBottom: '4px',
+              }}
+            >
+              {val}
+            </div>
+            <div style={{ fontSize: '11px', color: '#525260', letterSpacing: '0.05em' }}>{label}</div>
           </div>
         ))}
       </div>
 
-      <div className="pt-8 text-xs text-zinc-700">
+      <div style={{ fontSize: '11px', color: '#525260' }}>
         Powered by{' '}
-        <a href="https://conk.app" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-500 transition">
+        <a
+          href="https://conk.app"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: '#7a6440', textDecoration: 'none', transition: 'color 0.15s' }}
+          onMouseEnter={e => (e.currentTarget.style.color = '#c8a96e')}
+          onMouseLeave={e => (e.currentTarget.style.color = '#7a6440')}
+        >
           CONK
         </a>
       </div>
@@ -106,7 +208,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ZkCallbackHandler />
-      <div className="min-h-screen bg-black text-white">
+      <div style={{ minHeight: '100vh', background: '#0c0c0e', color: '#f0ede6' }}>
         <Nav />
         <Routes>
           <Route path="/" element={<Landing />} />
