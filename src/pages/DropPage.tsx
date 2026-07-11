@@ -7,10 +7,11 @@ import React, { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Unlock, Loader2, AlertCircle, Eye, DollarSign } from 'lucide-react'
 import { Transaction } from '@mysten/sui/transactions'
+import { toB64 } from '@mysten/sui/utils'
 import { useStore } from '../lib/store'
 import { releaseKey, sealDecrypt } from '../lib/seal'
-import { buildReadCast, fetchCast, findUsdcCoins, baseToUsdc, CastInfo } from '../lib/conk'
-import { signAndExecute } from '../lib/zkLogin'
+import { buildReadCast, fetchCast, findUsdcCoins, baseToUsdc, getSuiClient, CastInfo } from '../lib/conk'
+import { signAndExecuteSponsored } from '../lib/zkLogin'
 import { ZKPROXY_URL, PROTOCOL_READ_FEE } from '../sui/config'
 import ZkLoginButton from '../components/ZkLoginButton'
 import dayjs from 'dayjs'
@@ -68,18 +69,21 @@ export default function DropPage() {
     try {
       setStep('unlocking')
 
+      // ── Check reader USDC (gas is sponsored — reader needs zero SUI) ──────
       const totalFee  = cast.priceBase + PROTOCOL_READ_FEE
       const usdcCoins = await findUsdcCoins(session.address)
       const payerCoin = usdcCoins.find(c => BigInt(c.balance) >= totalFee)
 
       if (!payerCoin) {
+        const have = usdcCoins.reduce((sum, c) => sum + BigInt(c.balance), 0n)
         throw new Error(
-          `Not enough USDC to decrypt. Need $${baseToUsdc(totalFee)}, ` +
-          `you have $${baseToUsdc(usdcCoins.reduce((sum, c) => sum + BigInt(c.balance), 0n))}. ` +
-          `Add USDC to your Sui wallet and try again.`
+          `Not enough USDC. Need $${baseToUsdc(totalFee)}, ` +
+          `you have $${baseToUsdc(have)}. ` +
+          `Send USDC (Sui mainnet) to your wallet — no SUI needed, gas is covered.`
         )
       }
 
+      // ── Build TX kind bytes (no gas — Enoki will add it) ───────────────
       const tx = new Transaction()
       tx.setSender(session.address)
       buildReadCast(tx, {
@@ -89,7 +93,25 @@ export default function DropPage() {
         priceBase:     cast.priceBase,
       })
 
-      const result = await signAndExecute(tx, session)
+      const suiClient = getSuiClient()
+      const kindBytes = await tx.build({ client: suiClient as any, onlyTransactionKind: true })
+
+      // ── Sponsor gas via Enoki (reader pays USDC, DEDDROP covers SUI gas) ─
+      const sponsorResp = await fetch(`${ZKPROXY_URL}/enoki-sponsor`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-App': 'deddrop' },
+        body:    JSON.stringify({ txKindBytes: toB64(kindBytes), sender: session.address }),
+      })
+
+      if (!sponsorResp.ok) {
+        const errText = await sponsorResp.text()
+        throw new Error('Gas sponsorship failed — try again or contact support. ' + errText)
+      }
+
+      const { sponsoredBytes, sponsorSig } = await sponsorResp.json()
+
+      // ── Sign with zkLogin + submit both signatures ─────────────────────
+      const result = await signAndExecuteSponsored(sponsoredBytes, sponsorSig, session)
       if (result.effects?.status?.status !== 'success') {
         throw new Error('Read TX failed: ' + JSON.stringify(result.effects?.status))
       }

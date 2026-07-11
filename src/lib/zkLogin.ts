@@ -146,6 +146,49 @@ export async function signAndExecute(
   })
 }
 
+// ── SIGN + EXECUTE (SPONSORED) ────────────────────────────────────────────
+// Used when gas is covered by Enoki (reader flow).
+// sponsoredBytes = full TX bytes with gas already set by Enoki (base64).
+// sponsorSig     = Enoki's sponsor signature (base64).
+// Submits [userZkLoginSig, sponsorSig] so the reader needs zero SUI.
+export async function signAndExecuteSponsored(
+  sponsoredBytes: string,
+  sponsorSig:     string,
+  session:        ZkLoginSession
+): Promise<import('@mysten/sui/client').SuiTransactionBlockResponse> {
+  if (!session.proof) throw new Error('ZK proof not available — session may have expired. Please sign in again.')
+
+  const { Ed25519Keypair }    = await import('@mysten/sui/keypairs/ed25519')
+  const { getZkLoginSignature } = await import('@mysten/sui/zklogin')
+  const { fromB64 }           = await import('@mysten/sui/utils')
+  const { getSuiClient }      = await import('./conk')
+
+  const client           = getSuiClient()
+  const secretKey        = sessionStorage.getItem('zklogin_ephemeral_secret') ?? ''
+  const ephemeralKeypair = Ed25519Keypair.fromSecretKey(secretKey)
+
+  // Sign the full sponsored TX bytes (gas already set by Enoki)
+  const { signature: ephemeralSig } = await ephemeralKeypair.signTransaction(fromB64(sponsoredBytes))
+
+  const proofWithSeed = {
+    ...(session.proof as any),
+    addressSeed: (session.proof as any).addressSeed ?? session.addressSeed ?? BigInt('0x' + session.salt).toString(),
+  }
+
+  const zkLoginSig = getZkLoginSignature({
+    inputs:        proofWithSeed,
+    maxEpoch:      session.maxEpoch,
+    userSignature: ephemeralSig,
+  })
+
+  // Sponsored TX requires both signatures: [user, gas-sponsor]
+  return client.executeTransactionBlock({
+    transactionBlock: sponsoredBytes,
+    signature:        [zkLoginSig, sponsorSig],
+    options:          { showEffects: true, showEvents: true, showObjectChanges: true },
+  })
+}
+
 // ── HELPERS ───────────────────────────────────────────────────
 export function getSession(): ZkLoginSession | null {
   try {
